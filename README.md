@@ -1,36 +1,22 @@
 # PharmaPy
 
+<img align="left" src="./doc/online_docs/images/PharmaPy_logo.jpeg" alt="PharmaPy_logo" height="250">
+
+<!-- BEGIN Status badges -->
+![GitHub all releases](https://img.shields.io/github/downloads/CryPTSys/PharmaPy/total)
+[![DOI](https://img.shields.io/badge/DOI-10.1016%2Fj.compchemeng.2021.107408-blue)](https://www.sciencedirect.com/science/article/abs/pii/S0098135421001861)
+<!-- END Status badges -->
+
 PharmaPy is a pythonic library for the analysis of pharmaceutical manufacturing systems.
 
-It allows to simulate the dynamics of standalone, drug substance unit operations in a variety of operating modes (batch, continuous, semibatch). Also, PharmaPy facilitates setting up and simulating pharmaceutical **flowsheets**, i.e., interconnected unit operations in a variety of operation modes, ranging from end-to-end batch, end-to-end continuous, and hybrid operation (combination of batch and/or continuous and semicontinuous unit operations).
+It allows to simulate the dynamics of standalone, drug substance unit operations in a variety of operating modes (batch, continuous, semibatch). Also, PharmaPy facilitates setting up and simulating pharmaceutical **flowsheets**, i.e., interconnected unit operations running in one or more operation modes, offering flexibility to simulate end-to-end batch, end-to-end continuous, and hybrid operation schemes (combination of batch and/or continuous and semicontinuous unit operations).
+
+<br clear="left"/>
 
 ## Getting started
-Source code, examples and documentation sources are on [GitHub](https://github.com/PharmaPy-org/PharmaPy).
+To install PharmaPy, download and unzip the code from the release section, and then follow the instructions on the `install_instructions.txt` file.
 
-### Installation
-PharmaPy is published on PyPI as `pharmapy-org`, and you import it as `PharmaPy`:
+Read our [link to documentation page] for more information on how to install and how to use PharmaPy.
 
-```
-pip install pharmapy-org
-```
 
-```python
-import PharmaPy
-```
 
-The only integrator this installs is scipy's. Unit operations built on `MultiPhaseVessel` (the `*_Refactored` modules) default to `ScipyBackend`. Two other solver backends are optional:
-
-- **Assimulo (SUNDIALS CVode/IDA)** is used by `AssimuloBackend` and `AssimuloDAEBackend`. It is also needed by the legacy unit operations that have not been refactored yet: `Reactors`, `Crystallizers`, `Evaporators`, `Distillation`, `SolidLiquidSep`, `Containers`, `Drying_Model`, `DynamicExtraction` and `ThreePhaseSettler`. Install it from conda-forge, because the PyPI `assimulo` package is outdated and has no wheels:
-
-  ```
-  conda install -c conda-forge assimulo
-  ```
-
-- **Julia (DifferentialEquations.jl)** is used by `DiffeqpyBackend` and needs Python 3.10 or newer:
-
-  ```
-  pip install "pharmapy-org[julia]"
-  python -c "import diffeqpy; diffeqpy.install()"
-  ```
-
-To get a development install with every backend, clone the [GitHub repository](https://github.com/PharmaPy-org/PharmaPy) and follow `install_instructions.txt`. It sets up a conda environment that includes Assimulo and installs PharmaPy in editable mode.
