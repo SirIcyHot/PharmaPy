@@ -985,6 +985,10 @@ class BasePhase(ThermoPhysicalManager):
         return None
 
     def __getattr__(self, name):
+        # Protocol probes (copy's __deepcopy__/__setstate__, pickle, ...)
+        # are never mechanism attributes; answer them without delegation.
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
 
         mechanism = self._get_mechanism_attribute_owner(name)
 
