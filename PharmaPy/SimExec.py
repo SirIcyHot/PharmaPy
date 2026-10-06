@@ -125,10 +125,15 @@ class SimulationExec:
                     print('Done!')
                     print()
 
-                # Create connection object if needed
-                neighbors = self.graph[name]
-                if len(neighbors) > 0 and self.execution_names[ind + 1] in pick_units:
-                    uo_next = self.execution_names[ind + 1]
+                # Connect to the units this one feeds in the graph. This
+                # used to connect to the next unit in execution order, which
+                # is the same thing only for a linear chain: with two feeds
+                # into one unit, the first feed was wired into the second
+                # feed's unit and never reached the shared destination.
+                for uo_next in self.graph[name]:
+                    if uo_next not in pick_units:
+                        continue
+
                     connection = Connection(
                         source_uo=getattr(self, name),
                         destination_uo=getattr(self, uo_next))
@@ -147,17 +152,17 @@ class SimulationExec:
 
             # instance is already solved, pass data to connection
             elif isinstance(instance.outputs, dict):
-                connection = Connection(
-                    source_uo=getattr(self, name),
-                    destination_uo=getattr(self,
-                                           self.execution_names[ind + 1]))
+                for uo_next in self.graph[name]:
+                    connection = Connection(
+                        source_uo=getattr(self, name),
+                        destination_uo=getattr(self, uo_next))
 
-                conn_name = 'CONN%i' % count
-                connections[conn_name] = connection
+                    conn_name = 'CONN%i' % count
+                    connections[conn_name] = connection
 
-                connection.transfer_data()
+                    connection.transfer_data()
 
-                count += 1
+                    count += 1
 
         self.time_processing = time_processing
 

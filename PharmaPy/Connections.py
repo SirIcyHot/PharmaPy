@@ -388,6 +388,26 @@ class Connection:
         return any(cls.__module__ == 'PharmaPy.MultiPhaseVessel'
                    for cls in type(uo).__mro__)
 
+    def _pass_inlet(self, matter):
+        """Feed matter to the destination as a continuous inlet.
+
+        The Inlet setter replaces the destination's inlet list, so with two
+        units feeding one refactored vessel the second connection silently
+        discarded the first one's flow. A refactored vessel therefore keeps
+        one inlet per upstream unit, keyed by that unit so a re-solve
+        replaces its stream rather than adding another.
+        """
+        destination = self.destination_uo
+
+        if not self._is_refactored_unit(destination):
+            destination.Inlet = matter
+            return
+
+        # setdefault so a vessel built without __init__ (a copy) still works.
+        upstream = destination.__dict__.setdefault('_upstream_inlets', {})
+        upstream[id(self.source_uo)] = matter
+        destination.Inlet = list(upstream.values())
+
     @staticmethod
     def _is_refactored_matter(matter):
         """Whether material belongs to the refactored phase stack."""
@@ -551,7 +571,7 @@ class Connection:
                 # how an old semibatch unit is fed would move every
                 # existing old-unit flowsheet.
                 if self.source_uo.oper_mode == 'Continuous':
-                    self.destination_uo.Inlet = transfered_matter
+                    self._pass_inlet(transfered_matter)
 
                     if self.destination_uo.Phases is None:
                         self.destination_uo.Phases = transfered_matter
@@ -578,4 +598,4 @@ class Connection:
             if class_destination == 'DynamicExtractor':
                 self.destination_uo.Inlet = {'feed': transfered_matter}
             else:
-                self.destination_uo.Inlet = transfered_matter
+                self._pass_inlet(transfered_matter)
