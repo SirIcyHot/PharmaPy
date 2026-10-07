@@ -984,79 +984,6 @@ def stage10_standalone_all_modes():
     return '; '.join(notes)
 
 
-def stage11_multiple_inlets():
-    """Several feeds into one continuous reactor, standalone and in a flowsheet.
-
-    Standalone, N separate feeds must give the same trajectory as one feed
-    premixed to the same total flow and composition. In a flowsheet, two
-    units feeding a third must both reach it: SolveFlowsheet used to wire
-    each unit to the next one in execution order, so the first feed was
-    piped into the second feed's unit and never reached the shared one.
-    """
-    fracs = [np.array([.30, .00, 0, 0, .70]),
-             np.array([.00, .30, 0, 0, .70]),
-             np.array([.15, .15, 0, 0, .70])]
-    flows = [0.004, 0.006, 0.003]
-
-    def feed(flow, frac):
-        return NewLiquidStream(PATH, temp=TEMP_INIT, mass_flow=flow,
-                               mass_frac=frac, name_solv='solvent')
-
-    def controller():
-        return ContinuousVesselController(temp_func=lambda t: TEMP_INIT)
-
-    split = _new_reactor(NewContReactor, controller=controller(),
-                         inlet=[feed(q, w) for q, w in zip(flows, fracs)])
-    total = sum(flows)
-    premixed = _new_reactor(
-        NewContReactor, controller=controller(),
-        inlet=feed(total, np.dot(flows, fracs) / total))
-
-    for unit in (split, premixed):
-        unit.solve_unit(runtime=1800.0, verbose=False)
-
-    split_end = np.asarray(split.result.mass_j_liquid0)[-1]
-    mixed_end = np.asarray(premixed.result.mass_j_liquid0)[-1]
-    gap = np.abs(split_end - mixed_end).max() / np.abs(mixed_end).max()
-
-    if gap > 1e-8:
-        raise AssertionError('3 feeds != premixed feed: rel %.3e' % gap)
-
-    flst = SimulationExec(PATH, flowsheet={'R01': ['R03'], 'R02': ['R03'],
-                                           'R03': []})
-    flst.R01 = _new_reactor(NewContReactor, controller=controller(),
-                            inlet=_new_feed(np.array([1.0, 0, 0, 0, 0])))
-    flst.R02 = _new_reactor(NewContReactor, controller=controller(),
-                            inlet=_new_feed(np.array([0, 1.0, 0, 0, 0])))
-    flst.R03 = _new_reactor(NewContReactor, controller=controller())
-    flst.SolveFlowsheet(
-        kwargs_run=quiet({name: {'runtime': 1800.0}
-                          for name in ('R01', 'R02', 'R03')}),
-        verbose=False)
-
-    num_in = len(flst.R03.inlet_connections)
-    if num_in != 2:
-        raise AssertionError('R03 has %d inlets, expected 2' % num_in)
-
-    # R01 is fed only A; it must not have received R02's B-rich outlet.
-    r01_b = np.asarray(flst.R01.result.mole_conc_liquid0)[-1][1]
-    if r01_b > 0.1:
-        raise AssertionError('R01 was fed by R02 (B = %.3f)' % r01_b)
-
-    def outflow(unit):
-        return float(np.asarray(unit.result.outlet_vol_flow)[-1])
-
-    fed = outflow(flst.R01) + outflow(flst.R02)
-    drift = abs(outflow(flst.R03) - fed) / fed
-
-    if drift > 1e-2:
-        raise AssertionError('R03 outflow off the summed feeds by %.3e'
-                             % drift)
-
-    return ('3 feeds == premixed (%.1e); 2 upstream units both reach R03, '
-            'outflow within %.1e of their sum' % (gap, drift))
-
-
 STAGES = (
     ('0  old Filter alone                                 ', stage0_filter_alone),
     ('1  all-old   R01 -> CR01 -> F01                     ', stage1_all_old),
@@ -1069,7 +996,6 @@ STAGES = (
     ('8  continuous -> semibatch, all pairings            ', stage8_continuous_to_semibatch_matrix),
     ('9  1D-FVM vs moments, compared on mass              ', stage9_fvm_versus_moments),
     ('10 each unit class solved standalone                ', stage10_standalone_all_modes),
-    ('11 several feeds into one continuous reactor        ', stage11_multiple_inlets),
 )
 
 

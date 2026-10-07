@@ -131,24 +131,6 @@ class StateVariable:
         if self.compute_value is None and self.state_type=='post':
             self.compute_value = self.default_compute_value
 
-    def __deepcopy__(self, memo):
-        # compute_value is usually a bound method of the mechanism or vessel
-        # that declared the state. Deep-copying it would deep-copy that owner
-        # -- and through it the owning phase -- so the copied state would
-        # compute its value from a stale clone instead of the live object.
-        # Share the callable; copy everything else as usual.
-        cls = type(self)
-        copied = cls.__new__(cls)
-        memo[id(self)] = copied
-
-        for name, value in self.__dict__.items():
-            if name == "compute_value":
-                copied.__dict__[name] = value
-            else:
-                copied.__dict__[name] = copy.deepcopy(value, memo)
-
-        return copied
-
     def as_dict(self):
         """Backward compatibility."""
         out = {

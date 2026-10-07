@@ -93,9 +93,6 @@ class MultiPhaseVessel():
         #port initialization
         self._inlet_connections = []
         self._outlet_connections = []
-        # Streams handed over by upstream units, one per source; see
-        # Connection._pass_inlet.
-        self._upstream_inlets = {}
 
         #Integrator
         # scipy is the only solver PharmaPy requires, so it is the default;

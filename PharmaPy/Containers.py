@@ -427,13 +427,13 @@ class Mixer:
 
             return balance
 
-        temp_seed = sum(temp_in) / len(temp_in)
+        temp_seed = sum(temp_in) / 2
         # temp_bce = fsolve(temp_root, temp_seed)  # TODO: this is very slow
 
         temp_seed = temp_seed[0]
         temp_bce = np.zeros(massfrac.shape[0])
         for idx in range(len(temp_bce)):
-            temp_bce[idx] = fsolve(temp_root, temp_seed, args=(idx, ))[0]
+            temp_bce[idx] = fsolve(temp_root, temp_seed, args=(idx, ))
             temp_seed = temp_bce[idx]
 
         return total_mass, massfrac, temp_bce
