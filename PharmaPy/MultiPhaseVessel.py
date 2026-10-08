@@ -92,6 +92,8 @@ class MultiPhaseVessel():
         
         #port initialization
         self._inlet_connections = []
+        self._primary_inlet_connections = []
+        self._extra_inlet_connections = []
         self._outlet_connections = []
 
         #Integrator
@@ -247,8 +249,46 @@ class MultiPhaseVessel():
 
         inlet= inlet if isinstance(inlet,(list,tuple)) else [inlet]
 
-        self._create_default_connections('inlet_connections',inlet)
-    
+        self.inlet_connections = self._default_connections(inlet)
+
+    @property
+    def extra_inlets(self)->list[StreamConnection]:
+        """Feeds kept alongside whatever Inlet is set to.
+
+        A flowsheet hands upstream material over by assigning Inlet, which
+        replaces every connection made through Inlet before it. Feeds placed
+        here survive that: the vessel is fed the Inlet stream(s) first, then
+        these, so one upstream unit plus any number of fresh feeds can reach
+        the same vessel.
+
+        Opt-in on purpose. Flowsheets routinely give a downstream vessel a
+        placeholder Inlet that the upstream unit is meant to replace, so
+        keeping every earlier Inlet would silently double-feed them.
+
+        Accepts a stream, a list of streams, or StreamConnection objects;
+        reads back as StreamConnection objects. They are appended whether
+        the other inlets were set through Inlet or inlet_connections.
+        """
+        return self._extra_inlet_connections
+
+    @extra_inlets.setter
+    def extra_inlets(self, inlets):
+
+        inlets = list(inlets) if isinstance(inlets, (list, tuple)) else [inlets]
+
+        connections = [
+            item if isinstance(item, StreamConnection)
+            else self._default_connections([item])[0]
+            for item in inlets
+        ]
+
+        self._extra_inlet_connections = connections
+        self._sync_inlet_connections()
+
+    def _sync_inlet_connections(self):
+        self._inlet_connections = (self._primary_inlet_connections
+                                   + self._extra_inlet_connections)
+
     @property
     def inlet_connections(self)->list[StreamConnection]:
         return self._inlet_connections
@@ -269,8 +309,14 @@ class MultiPhaseVessel():
             raise TypeError(
                 "inlet_connections must contain StreamConnection objects")
 
-        self._inlet_connections = connections
+        self._primary_inlet_connections = list(connections)
+        self._sync_inlet_connections()
     def _create_default_connections(self,connection_attr, inlet_streams):
+
+        setattr(self,connection_attr,self._default_connections(inlet_streams))
+
+    def _default_connections(self, inlet_streams)->list[StreamConnection]:
+        """One connection per stream, each phase mapped onto its namesake."""
 
         connections = []
 
@@ -305,7 +351,8 @@ class MultiPhaseVessel():
                     phase_mappings=mappings
                 )
             )
-        setattr(self,connection_attr,connections)
+
+        return connections
 
     @property
     def outlet_connections(self)->list[StreamConnection]:
