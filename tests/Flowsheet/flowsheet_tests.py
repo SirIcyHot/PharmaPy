@@ -27,6 +27,15 @@ from PharmaPy.ProcessControl import DynamicInput
 
 from PharmaPy.SimExec import SimulationExec
 
+from PharmaPy.Streams_Refactored import LiquidStream as NewLiquidStream
+from PharmaPy.Phases_Refactored import LiquidPhase as NewLiquidPhase
+from PharmaPy.Reactors_Refactored import (SemiBatchReactor as NewSemiReactor,
+                                          ContinuousReactor as NewContReactor)
+from PharmaPy.ProcessControl_Refactored import (SimpleTemperatureController,
+                                                ContinuousVesselController)
+from PharmaPy.IntegratorBackends import ScipyBackend
+from PharmaPy.Commons import trapezoidal_rule
+
 
 class TestFlowsheets(unittest.TestCase):
     """ Class containing code for testing flowsheet executions in PharmaPy
@@ -324,8 +333,213 @@ class TestFlowsheets(unittest.TestCase):
         run_kwargs = make_non_verbose(run_kwargs)
         flst.SolveFlowsheet(kwargs_run=run_kwargs, verbose=False)
         print('PFR_MSMPR_HOLD_FILT flowsheet simulation complete')
- 
-        
+
+
+class TestExtraInlets(unittest.TestCase):
+    """One upstream unit plus fresh feeds into a single refactored vessel.
+
+    The flowsheet hands upstream material over by assigning Inlet, which
+    replaces the vessel's earlier Inlet. Feeds given through extra_inlets
+    must survive that handover and be fed alongside the upstream stream.
+
+    Runs on the refactored units with the scipy backend, so it needs no
+    Assimulo. R02 is semibatch: nothing leaves it, so everything that enters
+    must be found in its holdup, which makes the balances exact up to solver
+    and quadrature error.
+    """
+
+    PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        'data', 'compound_database.json')
+    RXNS = ['A + B --> C', 'C + A --> D']
+    TEMP = 313.15
+    RUNTIME = 3600.0
+    IDX_SOLVENT = 4
+    # A + B --> C and C + A --> D: every B consumed makes one C, every C
+    # consumed makes one D, so moles of B + C + D are conserved.
+    IDX_BCD = [1, 2, 3]
+
+    # Solver and trapezoid error measured at about 2e-7 relative; this
+    # bound catches a dropped feed (a third of R02's intake) with room
+    # to spare.
+    RTOL = 1e-5
+
+    def _feed(self, mole_conc, vol_flow):
+        return NewLiquidStream(self.PATH, temp=self.TEMP,
+                               mole_conc=np.asarray(mole_conc, dtype=float),
+                               vol_flow=vol_flow, name_solv='solvent')
+
+    def _reactor(self, cls, controller, inlet=None):
+        unit = cls(integrator=ScipyBackend(options={'maxh': 60}),
+                   h_conv=10000.0, diam=0.4, controller=controller)
+        unit.Phases = NewLiquidPhase(
+            self.PATH, temp=self.TEMP,
+            mole_conc=np.array([0.33, 0.33, 0, 0, 0]),
+            vol=0.06, name_solv='solvent')
+        unit.RxnKinetics = RxnKinetics(
+            path=self.PATH, rxn_list=self.RXNS,
+            k_params=np.array([2.654e4, 5.3e2]),
+            ea_params=np.array([4.0e4, 3.0e4]))
+
+        if inlet is not None:
+            unit.Inlet = inlet
+
+        return unit
+
+    def _upstream_feed(self):
+        return self._feed([0.5, 0.5, 0, 0, 0], 1e-5)
+
+    def _run(self, extra_inlets):
+        """CSTR R01 --> semibatch R02, R02 given a placeholder Inlet."""
+        flst = SimulationExec(self.PATH, flowsheet='R01 --> R02')
+
+        flst.R01 = self._reactor(
+            NewContReactor,
+            ContinuousVesselController(temp_func=lambda t: self.TEMP),
+            inlet=self._upstream_feed())
+
+        # The placeholder the flowsheet is meant to replace.
+        flst.R02 = self._reactor(
+            NewSemiReactor,
+            SimpleTemperatureController(temp_func=lambda t: self.TEMP),
+            inlet=self._feed([0.5, 0.5, 0, 0, 0], 1e-5))
+
+        if extra_inlets is not None:
+            flst.R02.extra_inlets = extra_inlets
+
+        run = {name: {'runtime': self.RUNTIME, 'verbose': False}
+               for name in ('R01', 'R02')}
+        flst.SolveFlowsheet(kwargs_run=run, verbose=False)
+
+        return flst
+
+    def _mw(self, flst):
+        return np.asarray(flst.R01.Phases.Liquids[0].mw, dtype=float)
+
+    def _upstream_outflow(self, flst):
+        """Mass of each species R01 discharged, from its own trajectory."""
+        result = flst.R01.result
+        time = np.asarray(result.time)
+        mole_conc = np.asarray(result.mole_conc_liquid0)    # kmol/m3
+        vol_flow = np.asarray(result.outlet_vol_flow)       # m3/s
+
+        mass_flow_j = mole_conc * self._mw(flst) * vol_flow[:, np.newaxis]
+
+        return np.array([trapezoidal_rule(time, mass_flow_j[:, j])
+                         for j in range(mass_flow_j.shape[1])])
+
+    def _feed_mass(self, streams):
+        """Mass of each species a constant feed delivers over the run."""
+        return sum(np.asarray(s.mass_flow) * np.asarray(s.mass_frac)
+                   for s in streams) * self.RUNTIME
+
+    def _accumulated(self, unit):
+        mass_j = np.asarray(unit.result.mass_j_liquid0)
+        return mass_j[-1] - mass_j[0]
+
+    def _assert_closes(self, label, accumulated, entered, throughput=None):
+        """Residual relative to throughput, which defaults to `entered`.
+
+        A vessel near steady state accumulates a small difference of large
+        flows, so dividing by the accumulation would inflate an error that
+        is tiny next to what actually passed through.
+        """
+        if throughput is None:
+            throughput = entered
+        scale = max(abs(throughput), 1e-30)
+        rel = abs(accumulated - entered) / scale
+        self.assertLess(
+            rel, self.RTOL,
+            '%s does not close: accumulated %.6g, entered %.6g (rel %.2e)'
+            % (label, accumulated, entered, rel))
+
+    def test_upstream_plus_extra_inlets_mass_balance(self):
+        solvent = self._feed([0, 0, 0, 0, 0], 2e-6)
+        b_feed = self._feed([0, 0.8, 0, 0, 0], 3e-6)
+        extras = [solvent, b_feed]
+
+        flst = self._run(extras)
+
+        # The upstream stream replaced the placeholder; the extras survived.
+        connections = flst.R02.inlet_connections
+        self.assertEqual(len(connections), 3)
+        self.assertIs(connections[1].stream.Phases[0], solvent)
+        self.assertIs(connections[2].stream.Phases[0], b_feed)
+        self.assertIsNotNone(
+            getattr(connections[0].stream, 'y_upstream', None)
+            or connections[0].stream.Phases[0].y_upstream,
+            'connection 0 should carry the upstream trajectory')
+
+        upstream_out = self._upstream_outflow(flst)
+        mw = self._mw(flst)
+
+        # Control: R01 must balance on its own, or the outflow integral
+        # used below is not a trustworthy measure of what left it.
+        r01_in = self._feed_mass([self._upstream_feed()])
+        r01_acc = self._accumulated(flst.R01)
+        self._assert_closes('R01 total mass', r01_acc.sum(),
+                            r01_in.sum() - upstream_out.sum(),
+                            throughput=r01_in.sum())
+
+        extra_in = self._feed_mass(extras)
+        r02_acc = self._accumulated(flst.R02)
+
+        # Guard against a vacuous pass: the extras must be a real share of
+        # what R02 took in, so dropping them could not hide in the tolerance.
+        self.assertGreater(extra_in.sum(), 0.1 * r02_acc.sum())
+
+        self._assert_closes('R02 total mass', r02_acc.sum(),
+                            upstream_out.sum() + extra_in.sum())
+
+        i = self.IDX_SOLVENT
+        self._assert_closes('R02 solvent', r02_acc[i],
+                            upstream_out[i] + extra_in[i])
+
+        bcd = self.IDX_BCD
+        self._assert_closes(
+            'R02 moles of B + C + D',
+            (r02_acc[bcd] / mw[bcd]).sum(),
+            ((upstream_out[bcd] + extra_in[bcd]) / mw[bcd]).sum())
+
+    def test_placeholder_inlet_replaced_without_extras(self):
+        """Without extra_inlets the handover replaces, as it always has."""
+        flst = self._run(extra_inlets=None)
+
+        self.assertEqual(len(flst.R02.inlet_connections), 1)
+
+        # Everything R02 gained came from R01: the placeholder feed is gone.
+        upstream_out = self._upstream_outflow(flst)
+        self._assert_closes('R02 total mass',
+                            self._accumulated(flst.R02).sum(),
+                            upstream_out.sum())
+
+    def test_extra_inlets_survive_reassigning_inlet(self):
+        unit = self._reactor(
+            NewSemiReactor,
+            SimpleTemperatureController(temp_func=lambda t: self.TEMP))
+        extra = self._feed([0, 0, 0, 0, 0], 2e-6)
+        unit.extra_inlets = extra
+
+        first, second = self._upstream_feed(), self._upstream_feed()
+        unit.Inlet = first
+        unit.Inlet = second
+
+        streams = [c.stream.Phases[0] for c in unit.inlet_connections]
+        self.assertEqual(len(streams), 2)
+        self.assertIs(streams[0], second)
+        self.assertIs(streams[1], extra)
+
+        # Connections set directly are kept too, with the extras after them.
+        direct = unit.inlet_connections[:1]
+        unit.inlet_connections = direct
+        self.assertEqual(len(unit.inlet_connections), 2)
+        self.assertIs(unit.inlet_connections[0], direct[0])
+        self.assertIs(unit.inlet_connections[1].stream.Phases[0], extra)
+
+        unit.extra_inlets = []
+        self.assertEqual(len(unit.inlet_connections), 1)
+        self.assertIs(unit.inlet_connections[0].stream.Phases[0], second)
+
+
 if __name__ == '__main__':
     unittest.main()
     
