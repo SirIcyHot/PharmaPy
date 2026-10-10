@@ -444,3 +444,25 @@ def test_product_stream_carries_both_phases():
     families = [phase.phase_family for phase in vessel.Outlet.Phases]
     assert "liquid" in families
     assert "solid" in families
+
+
+def test_slightly_negative_population_does_not_break_the_outlet():
+    """A solver iterate just below zero still resolves the product stream.
+
+    Newton iterates on an unseeded vessel can leave a few bins slightly
+    negative. The solid then reads a negative mass, its outlet flow clamps
+    to zero, and emptying the outlet workspace used to raise 'Cannot scale a
+    distribution with zero third moment'.
+    """
+    vessel = _build_crystallizer()
+
+    collection = vessel.solver_state_collection
+    distrib_key = next(k for k in collection.states if k.name == "distrib")
+    states = np.array(vessel.create_solver_init_states(), dtype=float)
+    undershoot = np.zeros(NUM_GRID)
+    undershoot[100] = -1.0e-6  # [#/(um m**3)]
+    states[collection.slices[distrib_key]] = undershoot
+
+    packed = np.asarray(vessel.unit_model(0.0, states, mat_bce=True))
+
+    assert np.all(np.isfinite(packed))

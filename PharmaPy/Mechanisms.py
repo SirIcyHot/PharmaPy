@@ -1467,7 +1467,13 @@ class OneDFVMMechanism(PopulationBalanceMechanism):
         # ratio is then applied to the conditioned state, which is what is
         # actually stored.
         current_m3 = self.compute_third_moment(self.true_state(distribution))
-        if target_m3==0 and current_m3 == 0:
+        if target_m3 == 0:
+            # Zero needs no shape to scale. A Newton iterate can leave a
+            # few bins slightly negative, so current_m3 < 0 here is real:
+            # the vessel solid then reads a negative mass, its outlet flow
+            # clamps to zero, and the outlet workspace is emptied.
+            setattr(self, self.distribution_state_name,
+                    np.zeros_like(distribution))
             return
         if current_m3 <= 0:
             raise ValueError("Cannot scale a distribution with zero third moment.")
@@ -1821,7 +1827,10 @@ class MomentsPopulationBalance(PopulationBalanceMechanism):
         target_mu3 = value / (self.density * self.kv * 1e-18 * vol_slurry)
         current = self.true_state(moments)[3]
 
-        if target_mu3 == 0 and current == 0:
+        if target_mu3 == 0:
+            # See OneDFVMMechanism.set_third_moment: a negative current
+            # mu_3 from a solver iterate must not block emptying.
+            setattr(self, self.moments_state_name, np.zeros_like(moments))
             return
 
         if current <= 0:
